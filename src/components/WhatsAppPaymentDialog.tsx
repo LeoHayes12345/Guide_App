@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { MessageCircle, Check, CreditCard } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
+import { loadStripe } from '@stripe/stripe-js';
 
 interface WhatsAppPaymentDialogProps {
   isOpen: boolean;
@@ -23,18 +24,151 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
   const [paymentStep, setPaymentStep] = useState<'details' | 'payment' | 'success'>('details');
   const [formData, setFormData] = useState({
     email: '',
-    cardNumber: '',
-    expiryDate: '',
-    cvv: '',
     name: ''
+  });
+  const [stripe, setStripe] = useState<any>(null);
+  const [paymentRequest, setPaymentRequest] = useState<any>(null);
+  const [canMakePayment, setCanMakePayment] = useState({
+    applePay: false,
+    googlePay: false
   });
   const { toast } = useToast();
 
-  const handlePayment = async () => {
-    if (!formData.email || !formData.cardNumber || !formData.name) {
+  // Initialize Stripe and Payment Request API
+  useEffect(() => {
+    const initializeStripe = async () => {
+      const stripeInstance = await loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
+      setStripe(stripeInstance);
+
+      if (stripeInstance) {
+        const pr = stripeInstance.paymentRequest({
+          country: 'US',
+          currency: 'eur',
+          total: {
+            label: 'WhatsApp Live Chat Access',
+            amount: 299, // €2.99 in cents
+          },
+          requestPayerName: true,
+          requestPayerEmail: true,
+        });
+
+        // Check if Apple Pay and Google Pay are available
+        pr.canMakePayment().then((result: any) => {
+          if (result) {
+            setCanMakePayment({
+              applePay: result.applePay || false,
+              googlePay: result.googlePay || false
+            });
+            setPaymentRequest(pr);
+          }
+        });
+
+        // Handle payment method
+        pr.on('paymentmethod', async (ev: any) => {
+          setIsProcessing(true);
+          
+          try {
+            // Create payment intent via Supabase Edge Function
+            const { data: paymentData, error: paymentError } = await supabase.functions.invoke('create-payment-intent', {
+              body: {
+                amount: 299,
+                currency: 'eur',
+                customer_email: ev.payerEmail || formData.email,
+                customer_name: ev.payerName || formData.name,
+                payment_method_types: ['card', 'apple_pay', 'google_pay']
+              }
+            });
+
+            if (paymentError) throw paymentError;
+
+            // Confirm payment with Stripe
+            const { error: confirmError } = await stripeInstance.confirmCardPayment(
+              paymentData.client_secret,
+              { payment_method: ev.paymentMethod.id },
+              { handleActions: false }
+            );
+
+            if (confirmError) {
+              ev.complete('fail');
+              throw confirmError;
+            }
+
+            // Store WhatsApp access in database
+            const { error: dbError } = await supabase
+              .from('premium_users')
+              .upsert({
+                email: ev.payerEmail || formData.email,
+                name: ev.payerName || formData.name,
+                subscription_type: 'whatsapp_chat',
+                payment_status: 'completed',
+                stripe_customer_id: paymentData?.customer_id,
+                created_at: new Date().toISOString()
+              });
+
+            if (dbError) throw dbError;
+
+            ev.complete('success');
+            setPaymentStep('success');
+            
+            toast({
+              title: 'Payment Successful!',
+              description: 'You now have access to WhatsApp Live Chat.',
+            });
+
+            setTimeout(() => {
+              onSuccess();
+              onClose();
+            }, 2000);
+
+          } catch (error) {
+            console.error('Payment error:', error);
+            ev.complete('fail');
+            toast({
+              title: 'Payment Failed',
+              description: 'There was an error processing your payment. Please try again.',
+              variant: 'destructive'
+            });
+          } finally {
+            setIsProcessing(false);
+          }
+        });
+      }
+    };
+
+    if (isOpen) {
+      initializeStripe();
+    }
+  }, [isOpen, formData.email, formData.name, onSuccess, onClose, toast]);
+
+  const handleApplePayClick = () => {
+    if (paymentRequest && canMakePayment.applePay) {
+      paymentRequest.show();
+    } else {
+      toast({
+        title: 'Apple Pay Not Available',
+        description: 'Apple Pay is not available on this device or browser.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const handleGooglePayClick = () => {
+    if (paymentRequest && canMakePayment.googlePay) {
+      paymentRequest.show();
+    } else {
+      toast({
+        title: 'Google Pay Not Available',
+        description: 'Google Pay is not available on this device or browser.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const handleStripeCheckout = async () => {
+    if (!formData.email || !formData.name) {
       toast({
         title: 'Missing Information',
-        description: 'Please fill in all required fields.',
+        description: 'Please fill in your name and email.',
         variant: 'destructive'
       });
       return;
@@ -43,52 +177,30 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
     setIsProcessing(true);
 
     try {
-      // Create payment intent
-      const { data: paymentData, error: paymentError } = await supabase.functions.invoke('create-payment-intent', {
+      // Create Stripe Checkout session
+      const { data: sessionData, error: sessionError } = await supabase.functions.invoke('create-payment-intent', {
         body: {
-          amount: 299, // €2.99 in cents
+          amount: 299,
           currency: 'eur',
           customer_email: formData.email,
-          customer_name: formData.name
+          customer_name: formData.name,
+          payment_method_types: ['card', 'apple_pay', 'google_pay'],
+          mode: 'checkout' // Use Stripe Checkout instead of Payment Intent
         }
       });
 
-      if (paymentError) throw paymentError;
+      if (sessionError) throw sessionError;
 
-      // Simulate payment processing
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // Store WhatsApp access in database
-      const { error: dbError } = await supabase
-        .from('premium_users')
-        .upsert({
-          email: formData.email,
-          name: formData.name,
-          subscription_type: 'whatsapp_chat',
-          payment_status: 'completed',
-          stripe_customer_id: paymentData?.customer_id,
-          created_at: new Date().toISOString()
-        });
-
-      if (dbError) throw dbError;
-
-      setPaymentStep('success');
-      
-      toast({
-        title: 'Payment Successful!',
-        description: 'You now have access to WhatsApp Live Chat.',
-      });
-
-      setTimeout(() => {
-        onSuccess();
-        onClose();
-      }, 2000);
+      // Redirect to Stripe Checkout
+      if (stripe && sessionData.checkout_url) {
+        window.location.href = sessionData.checkout_url;
+      }
 
     } catch (error) {
-      console.error('Payment error:', error);
+      console.error('Checkout error:', error);
       toast({
-        title: 'Payment Failed',
-        description: 'There was an error processing your payment. Please try again.',
+        title: 'Checkout Failed',
+        description: 'There was an error starting the checkout process. Please try again.',
         variant: 'destructive'
       });
     } finally {
@@ -100,9 +212,6 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
     setPaymentStep('details');
     setFormData({
       email: '',
-      cardNumber: '',
-      expiryDate: '',
-      cvv: '',
       name: ''
     });
   };
@@ -143,41 +252,64 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
               </div>
 
               <div className="bg-gradient-to-r from-blue-50 to-green-50 p-4 rounded-lg border">
-                <h4 className="font-semibold text-gray-800 mb-3 text-center">Secure Payment Options</h4>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="flex flex-col items-center p-2 bg-white rounded-lg border">
-                    <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center mb-1">
-                      <span className="text-white text-xs font-bold">🍎</span>
+                <h4 className="font-semibold text-gray-800 mb-3 text-center">Choose Your Payment Method</h4>
+                
+                {/* Apple Pay Button */}
+                <Button
+                  onClick={handleApplePayClick}
+                  disabled={!canMakePayment.applePay || isProcessing}
+                  className={`w-full mb-3 h-12 ${
+                    canMakePayment.applePay 
+                      ? 'bg-black hover:bg-gray-800 text-white' 
+                      : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-lg">🍎</span>
+                    <span className="font-semibold">Pay with Apple Pay</span>
+                  </div>
+                </Button>
+
+                {/* Google Pay Button */}
+                <Button
+                  onClick={handleGooglePayClick}
+                  disabled={!canMakePayment.googlePay || isProcessing}
+                  className={`w-full mb-3 h-12 ${
+                    canMakePayment.googlePay 
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                      : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-6 h-6 bg-white rounded flex items-center justify-center">
+                      <span className="text-blue-600 font-bold text-sm">G</span>
                     </div>
-                    <span className="text-xs text-gray-600">Apple Pay</span>
+                    <span className="font-semibold">Pay with Google Pay</span>
                   </div>
-                  <div className="flex flex-col items-center p-2 bg-white rounded-lg border">
-                    <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center mb-1">
-                      <span className="text-white text-xs font-bold">G</span>
-                    </div>
-                    <span className="text-xs text-gray-600">Google Pay</span>
-                  </div>
-                  <div className="flex flex-col items-center p-2 bg-white rounded-lg border">
-                    <CreditCard className="w-8 h-8 text-gray-600 mb-1" />
-                    <span className="text-xs text-gray-600">Credit Card</span>
-                  </div>
+                </Button>
+
+                <div className="flex items-center gap-3 my-3">
+                  <div className="flex-1 h-px bg-gray-300"></div>
+                  <span className="text-sm text-gray-500">or</span>
+                  <div className="flex-1 h-px bg-gray-300"></div>
                 </div>
-                <p className="text-xs text-gray-500 mt-2 text-center">
-                  Choose your preferred payment method at checkout
-                </p>
+
+                {/* Credit Card Button */}
+                <Button
+                  onClick={() => setPaymentStep('payment')}
+                  className="w-full h-12 bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <CreditCard className="w-5 h-5" />
+                    <span className="font-semibold">Pay with Credit Card</span>
+                  </div>
+                </Button>
               </div>
               
               <div className="text-center py-4">
                 <div className="text-3xl font-bold text-green-600">€2.99</div>
                 <div className="text-sm text-gray-600">One-time payment • 30 days access</div>
               </div>
-
-              <Button 
-                onClick={() => setPaymentStep('payment')} 
-                className="w-full bg-green-600 hover:bg-green-700"
-              >
-                Continue to Secure Checkout
-              </Button>
             </CardContent>
           </Card>
         )}
@@ -212,40 +344,6 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="cardNumber">Card Number</Label>
-                <Input
-                  id="cardNumber"
-                  value={formData.cardNumber}
-                  onChange={(e) => setFormData({...formData, cardNumber: e.target.value})}
-                  placeholder="4242 4242 4242 4242"
-                  maxLength={19}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="expiry">Expiry Date</Label>
-                  <Input
-                    id="expiry"
-                    value={formData.expiryDate}
-                    onChange={(e) => setFormData({...formData, expiryDate: e.target.value})}
-                    placeholder="MM/YY"
-                    maxLength={5}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="cvv">CVV</Label>
-                  <Input
-                    id="cvv"
-                    value={formData.cvv}
-                    onChange={(e) => setFormData({...formData, cvv: e.target.value})}
-                    placeholder="123"
-                    maxLength={3}
-                  />
-                </div>
-              </div>
-
               <div className="flex gap-2 pt-4">
                 <Button 
                   variant="outline" 
@@ -255,11 +353,11 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
                   Back
                 </Button>
                 <Button 
-                  onClick={handlePayment} 
+                  onClick={handleStripeCheckout} 
                   disabled={isProcessing}
                   className="flex-1 bg-green-600 hover:bg-green-700"
                 >
-                  {isProcessing ? 'Processing...' : 'Pay €2.99'}
+                  {isProcessing ? 'Processing...' : 'Continue to Stripe Checkout'}
                 </Button>
               </div>
             </CardContent>
@@ -288,3 +386,4 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
 };
 
 export default WhatsAppPaymentDialog;
+

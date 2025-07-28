@@ -26,66 +26,101 @@ serve(async (req) => {
     })
 
     // Parse request body
-    const { amount, currency, customer_email, customer_name } = await req.json()
+    const { 
+      amount, 
+      currency, 
+      customer_email, 
+      customer_name, 
+      payment_method_types = ['card', 'apple_pay', 'google_pay'],
+      mode = 'payment_intent' // 'payment_intent' for Apple/Google Pay, 'checkout' for Stripe Checkout
+    } = await req.json()
 
     // Validate required fields
     if (!amount || !currency || !customer_email || !customer_name) {
       throw new Error('Missing required fields: amount, currency, customer_email, customer_name')
     }
 
-    console.log('Creating checkout session for:', { amount, currency, customer_email, customer_name })
+    console.log('Processing payment request:', { amount, currency, customer_email, customer_name, mode })
 
-    // Create Stripe Checkout Session
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card', 'apple_pay', 'google_pay'],
-      line_items: [
-        {
-          price_data: {
-            currency: currency,
-            product_data: {
-              name: 'Tropoja Tourism Guide - Premium Features',
-              description: 'Live WhatsApp chat support, priority customer service, and exclusive travel tips',
+    if (mode === 'checkout') {
+      // Create Stripe Checkout Session for credit card payments
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: payment_method_types,
+        line_items: [
+          {
+            price_data: {
+              currency: currency,
+              product_data: {
+                name: 'Tropoja Tourism Guide - WhatsApp Live Chat Access',
+                description: 'Get instant access to live chat with local Tropoja experts via WhatsApp',
+              },
+              unit_amount: amount,
             },
-            unit_amount: amount,
+            quantity: 1,
           },
-          quantity: 1,
+        ],
+        mode: 'payment',
+        customer_email: customer_email,
+        metadata: {
+          customer_name: customer_name,
+          service_type: 'whatsapp_chat'
         },
-      ],
-      mode: 'payment',
-      customer_email: customer_email,
-      metadata: {
-        customer_name: customer_name,
-      },
-      success_url: `${req.headers.get('origin') || 'https://guide-app-k372.vercel.app'}/?payment=success`,
-      cancel_url: `${req.headers.get('origin') || 'https://guide-app-k372.vercel.app'}/?payment=cancelled`,
-      automatic_tax: {
-        enabled: false,
-      },
-      billing_address_collection: 'auto',
-      shipping_address_collection: {
-        allowed_countries: ['AL', 'US', 'CA', 'GB', 'DE', 'FR', 'IT', 'ES', 'NL', 'BE', 'AT', 'CH'],
-      },
-    })
+        success_url: `${req.headers.get('origin') || 'https://guide-app-k372.vercel.app'}/?payment=success`,
+        cancel_url: `${req.headers.get('origin') || 'https://guide-app-k372.vercel.app'}/?payment=cancelled`,
+        automatic_tax: {
+          enabled: false,
+        },
+        billing_address_collection: 'auto',
+      })
 
-    console.log('Checkout session created:', session.id)
+      console.log('Checkout session created:', session.id)
 
-    return new Response(
-      JSON.stringify({ 
-        sessionId: session.id,
-        url: session.url 
-      }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200,
-      },
-    )
+      return new Response(
+        JSON.stringify({ 
+          sessionId: session.id,
+          checkout_url: session.url 
+        }),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      )
+
+    } else {
+      // Create Payment Intent for Apple Pay/Google Pay
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: currency,
+        payment_method_types: payment_method_types,
+        metadata: {
+          customer_email: customer_email,
+          customer_name: customer_name,
+          service_type: 'whatsapp_chat'
+        },
+        receipt_email: customer_email,
+        description: 'Tropoja Tourism Guide - WhatsApp Live Chat Access',
+      })
+
+      console.log('Payment intent created:', paymentIntent.id)
+
+      return new Response(
+        JSON.stringify({ 
+          client_secret: paymentIntent.client_secret,
+          payment_intent_id: paymentIntent.id
+        }),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      )
+    }
 
   } catch (error) {
-    console.error('Error creating payment session:', error)
+    console.error('Error processing payment:', error)
     
     return new Response(
       JSON.stringify({ 
-        error: error.message || 'Failed to create payment session',
+        error: error.message || 'Failed to process payment',
         details: error.toString()
       }),
       {
