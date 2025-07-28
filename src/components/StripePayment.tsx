@@ -100,11 +100,32 @@ const StripePayment: React.FC<StripePaymentProps> = ({ onSuccess, onCancel }) =>
         <div className="mt-3 text-lg font-bold text-blue-800">€2.99</div>
       </Card>
 
-      <Card className="p-3 bg-green-50">
-        <div className="flex items-center gap-2 text-green-700 text-sm">
-          <Smartphone className="h-4 w-4" />
-          <span>Supports Apple Pay, Google Pay & Credit Cards</span>
+      <Card className="p-4 bg-gradient-to-r from-green-50 to-blue-50 border-green-200">
+        <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+          <Smartphone className="h-5 w-5 text-green-600" />
+          Secure Payment Options
+        </h4>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="flex flex-col items-center p-2 bg-white rounded-lg border">
+            <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center mb-1">
+              <span className="text-white text-xs font-bold">🍎</span>
+            </div>
+            <span className="text-xs text-gray-600">Apple Pay</span>
+          </div>
+          <div className="flex flex-col items-center p-2 bg-white rounded-lg border">
+            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center mb-1">
+              <span className="text-white text-xs font-bold">G</span>
+            </div>
+            <span className="text-xs text-gray-600">Google Pay</span>
+          </div>
+          <div className="flex flex-col items-center p-2 bg-white rounded-lg border">
+            <CreditCard className="w-8 h-8 text-gray-600 mb-1" />
+            <span className="text-xs text-gray-600">Credit Card</span>
+          </div>
         </div>
+        <p className="text-xs text-gray-500 mt-2 text-center">
+          Choose your preferred payment method at checkout
+        </p>
       </Card>
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -147,7 +168,7 @@ const StripePayment: React.FC<StripePaymentProps> = ({ onSuccess, onCancel }) =>
             disabled={!isFormValid || isProcessing}
             className="flex-1 bg-blue-600 hover:bg-blue-700"
           >
-             {isProcessing ? 'Processing...' : 'Pay €2.99'}
+             {isProcessing ? 'Processing...' : 'Continue to Payment - €2.99'}
           </Button>
         </div>
       </form>
