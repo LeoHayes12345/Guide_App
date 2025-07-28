@@ -1,0 +1,12 @@
+{"level":"info","ts":1753718547.8386214,"caller":"cmd/pull.go:12","msg":"Pulling state from remote storage"}
+{"level":"info","ts":1753718547.8387828,"caller":"cmd/pull.go:16","msg":"Pull is not allowed, waiting for config change"}
+{"level":"warn","ts":1753718547.840054,"caller":"utils/utils.go:23","msg":"Failed to fetch CDP WebSocket URL, will retry","error":"Get \"http://localhost:9222/json/version\": dial tcp [::1]:9222: connect: connection refused"}
+{"level":"warn","ts":1753718548.3414483,"caller":"utils/utils.go:23","msg":"Failed to fetch CDP WebSocket URL, will retry","error":"Get \"http://localhost:9222/json/version\": dial tcp [::1]:9222: connect: connection refused"}
+{"level":"warn","ts":1753718548.8426785,"caller":"utils/utils.go:23","msg":"Failed to fetch CDP WebSocket URL, will retry","error":"Get \"http://localhost:9222/json/version\": dial tcp [::1]:9222: connect: connection refused"}
+{"level":"warn","ts":1753718549.3439271,"caller":"utils/utils.go:23","msg":"Failed to fetch CDP WebSocket URL, will retry","error":"Get \"http://localhost:9222/json/version\": dial tcp [::1]:9222: connect: connection refused"}
+{"level":"warn","ts":1753718549.8451078,"caller":"utils/utils.go:23","msg":"Failed to fetch CDP WebSocket URL, will retry","error":"Get \"http://localhost:9222/json/version\": dial tcp [::1]:9222: connect: connection refused"}
+{"level":"warn","ts":1753718550.3463,"caller":"utils/utils.go:23","msg":"Failed to fetch CDP WebSocket URL, will retry","error":"Get \"http://localhost:9222/json/version\": dial tcp [::1]:9222: connect: connection refused"}
+{"level":"info","ts":1753718550.9125657,"caller":"watcher/cdp_watcher.go:99","msg":"Watching targets"}
+{"level":"info","ts":1753718551.050528,"caller":"watcher/cdp_watcher.go:117","msg":"Initial target found","targetID":"E5F8880BCEB87E70DCFE9D76D99DBCFE"}
+{"level":"info","ts":1753718551.0557008,"caller":"watcher/cdp_watcher.go:143","msg":"Target info changed","targetID":"E5F8880BCEB87E70DCFE9D76D99DBCFE"}
+{"level":"info","ts":1753718553.0652056,"caller":"cmd/run.go:71","msg":"Put is not allowed"}
