@@ -141,6 +141,31 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
                   <li>• 30-day access period</li>
                 </ul>
               </div>
+
+              <div className="bg-gradient-to-r from-blue-50 to-green-50 p-4 rounded-lg border">
+                <h4 className="font-semibold text-gray-800 mb-3 text-center">Secure Payment Options</h4>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="flex flex-col items-center p-2 bg-white rounded-lg border">
+                    <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center mb-1">
+                      <span className="text-white text-xs font-bold">🍎</span>
+                    </div>
+                    <span className="text-xs text-gray-600">Apple Pay</span>
+                  </div>
+                  <div className="flex flex-col items-center p-2 bg-white rounded-lg border">
+                    <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center mb-1">
+                      <span className="text-white text-xs font-bold">G</span>
+                    </div>
+                    <span className="text-xs text-gray-600">Google Pay</span>
+                  </div>
+                  <div className="flex flex-col items-center p-2 bg-white rounded-lg border">
+                    <CreditCard className="w-8 h-8 text-gray-600 mb-1" />
+                    <span className="text-xs text-gray-600">Credit Card</span>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-2 text-center">
+                  Choose your preferred payment method at checkout
+                </p>
+              </div>
               
               <div className="text-center py-4">
                 <div className="text-3xl font-bold text-green-600">€2.99</div>
@@ -151,7 +176,7 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
                 onClick={() => setPaymentStep('payment')} 
                 className="w-full bg-green-600 hover:bg-green-700"
               >
-                Continue to Payment
+                Continue to Secure Checkout
               </Button>
             </CardContent>
           </Card>
