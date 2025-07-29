@@ -32,7 +32,8 @@ serve(async (req) => {
       customer_email, 
       customer_name, 
       payment_method_types = ['card', 'apple_pay', 'google_pay'],
-      mode = 'payment_intent' // 'payment_intent' for Apple/Google Pay, 'checkout' for Stripe Checkout
+      mode = 'payment_intent', // 'payment_intent' for Apple/Google Pay, 'checkout' for Stripe Checkout
+      enable_link = false // Enable Stripe Link support
     } = await req.json()
 
     // Validate required fields
@@ -43,9 +44,9 @@ serve(async (req) => {
     console.log('Processing payment request:', { amount, currency, customer_email, customer_name, mode })
 
     if (mode === 'checkout') {
-      // Create Stripe Checkout Session for credit card payments
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: payment_method_types,
+      // Create Stripe Checkout Session with optional Link support
+      const sessionConfig = {
+        payment_method_types: enable_link ? ['card', 'link'] : payment_method_types,
         line_items: [
           {
             price_data: {
@@ -71,9 +72,20 @@ serve(async (req) => {
           enabled: false,
         },
         billing_address_collection: 'auto',
-      })
+      }
 
-      console.log('Checkout session created:', session.id)
+      // Add Link-specific configuration if enabled
+      if (enable_link) {
+        sessionConfig.payment_method_options = {
+          link: {
+            persistent_token: customer_email
+          }
+        }
+      }
+
+      const session = await stripe.checkout.sessions.create(sessionConfig)
+
+      console.log('Checkout session created:', session.id, 'with Link:', enable_link)
 
       return new Response(
         JSON.stringify({ 
