@@ -4,10 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { MessageCircle, Check, CreditCard, Link } from 'lucide-react';
+import { MessageCircle, Check, CreditCard, Smartphone } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
-import { loadStripe } from '@stripe/stripe-js';
+import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
+import { Elements, CardElement, useStripe, useElements, PaymentRequestButtonElement } from '@stripe/react-stripe-js';
 
 interface WhatsAppPaymentDialogProps {
   isOpen: boolean;
@@ -15,85 +16,312 @@ interface WhatsAppPaymentDialogProps {
   onSuccess: () => void;
 }
 
-const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
-  isOpen,
-  onClose,
-  onSuccess
-}) => {
+// Stripe Elements styling
+const cardElementOptions = {
+  style: {
+    base: {
+      fontSize: '16px',
+      color: '#424770',
+      '::placeholder': {
+        color: '#aab7c4',
+      },
+      padding: '12px',
+    },
+    invalid: {
+      color: '#9e2146',
+    },
+  },
+  hidePostalCode: false,
+};
+
+// Payment Form Component
+const PaymentForm: React.FC<{
+  formData: { email: string; name: string };
+  onSuccess: () => void;
+  onClose: () => void;
+}> = ({ formData, onSuccess, onClose }) => {
+  const stripe = useStripe();
+  const elements = useElements();
   const [isProcessing, setIsProcessing] = useState(false);
-  const [paymentStep, setPaymentStep] = useState<'details' | 'payment' | 'success'>('details');
-  const [formData, setFormData] = useState({
-    email: '',
-    name: ''
-  });
-  const [stripe, setStripe] = useState<any>(null);
+  const [paymentRequest, setPaymentRequest] = useState<any>(null);
+  const [canMakePayment, setCanMakePayment] = useState(false);
   const { toast } = useToast();
 
-  // Initialize Stripe
+  // Initialize Payment Request API for Apple Pay/Google Pay
   useEffect(() => {
-    const initializeStripe = async () => {
-      const stripeInstance = await loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
-      setStripe(stripeInstance);
-    };
-
-    if (isOpen) {
-      initializeStripe();
-    }
-  }, [isOpen]);
-
-  const handleStripeLinkPayment = async () => {
-    if (!formData.email || !formData.name) {
-      toast({
-        title: 'Missing Information',
-        description: 'Please fill in your name and email.',
-        variant: 'destructive'
+    if (stripe) {
+      const pr = stripe.paymentRequest({
+        country: 'US',
+        currency: 'eur',
+        total: {
+          label: 'WhatsApp Live Chat Access',
+          amount: 299, // €2.99 in cents
+        },
+        requestPayerName: true,
+        requestPayerEmail: true,
       });
+
+      // Check if Apple Pay or Google Pay is available
+      pr.canMakePayment().then((result) => {
+        if (result) {
+          setPaymentRequest(pr);
+          setCanMakePayment(true);
+        }
+      });
+
+      // Handle payment method from Apple Pay/Google Pay
+      pr.on('paymentmethod', async (ev) => {
+        setIsProcessing(true);
+        
+        try {
+          // Create payment intent
+          const { data: paymentData, error: paymentError } = await supabase.functions.invoke('create-payment-intent', {
+            body: {
+              amount: 299,
+              currency: 'eur',
+              customer_email: ev.payerEmail || formData.email,
+              customer_name: ev.payerName || formData.name,
+              payment_method_types: ['card'],
+              mode: 'payment_intent'
+            }
+          });
+
+          if (paymentError) throw paymentError;
+
+          // Confirm payment
+          const { error: confirmError } = await stripe.confirmCardPayment(
+            paymentData.client_secret,
+            { payment_method: ev.paymentMethod.id },
+            { handleActions: false }
+          );
+
+          if (confirmError) {
+            ev.complete('fail');
+            throw confirmError;
+          }
+
+          ev.complete('success');
+          
+          // Store in database
+          await supabase.from('premium_users').upsert({
+            email: ev.payerEmail || formData.email,
+            name: ev.payerName || formData.name,
+            subscription_type: 'whatsapp_chat',
+            payment_status: 'completed',
+            stripe_payment_intent_id: paymentData.payment_intent_id,
+            created_at: new Date().toISOString()
+          });
+
+          toast({
+            title: 'Payment Successful!',
+            description: 'You now have access to WhatsApp Live Chat.',
+          });
+
+          setTimeout(() => {
+            onSuccess();
+            onClose();
+          }, 2000);
+
+        } catch (error) {
+          console.error('Payment error:', error);
+          ev.complete('fail');
+          toast({
+            title: 'Payment Failed',
+            description: 'There was an error processing your payment. Please try again.',
+            variant: 'destructive'
+          });
+        } finally {
+          setIsProcessing(false);
+        }
+      });
+    }
+  }, [stripe, formData, onSuccess, onClose, toast]);
+
+  const handleCardPayment = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (!stripe || !elements) {
       return;
     }
 
     setIsProcessing(true);
 
     try {
-      console.log('Creating Stripe Link checkout session...');
-      
-      // Create Stripe Checkout session with Link enabled
-      const { data: sessionData, error: sessionError } = await supabase.functions.invoke('create-payment-intent', {
+      const cardElement = elements.getElement(CardElement);
+      if (!cardElement) throw new Error('Card element not found');
+
+      // Create payment intent
+      const { data: paymentData, error: paymentError } = await supabase.functions.invoke('create-payment-intent', {
         body: {
           amount: 299,
           currency: 'eur',
           customer_email: formData.email,
           customer_name: formData.name,
-          payment_method_types: ['card', 'link'],
-          mode: 'checkout',
-          enable_link: true
+          payment_method_types: ['card'],
+          mode: 'payment_intent'
         }
       });
 
-      if (sessionError) {
-        console.error('Checkout session creation failed:', sessionError);
-        throw sessionError;
+      if (paymentError) throw paymentError;
+
+      // Confirm payment with card
+      const { error: confirmError, paymentIntent } = await stripe.confirmCardPayment(
+        paymentData.client_secret,
+        {
+          payment_method: {
+            card: cardElement,
+            billing_details: {
+              name: formData.name,
+              email: formData.email,
+            },
+          },
+        }
+      );
+
+      if (confirmError) {
+        throw confirmError;
       }
 
-      console.log('Checkout session created:', sessionData);
+      if (paymentIntent.status === 'succeeded') {
+        // Store in database
+        await supabase.from('premium_users').upsert({
+          email: formData.email,
+          name: formData.name,
+          subscription_type: 'whatsapp_chat',
+          payment_status: 'completed',
+          stripe_payment_intent_id: paymentIntent.id,
+          created_at: new Date().toISOString()
+        });
 
-      // Redirect to Stripe Checkout with Link enabled
-      if (stripe && sessionData.checkout_url) {
-        window.location.href = sessionData.checkout_url;
-      } else {
-        throw new Error('No checkout URL received');
+        toast({
+          title: 'Payment Successful!',
+          description: 'You now have access to WhatsApp Live Chat.',
+        });
+
+        setTimeout(() => {
+          onSuccess();
+          onClose();
+        }, 2000);
       }
 
-    } catch (error) {
-      console.error('Stripe Link payment error:', error);
+    } catch (error: any) {
+      console.error('Payment error:', error);
       toast({
         title: 'Payment Failed',
-        description: 'There was an error starting the payment process. Please try again.',
+        description: error.message || 'There was an error processing your payment. Please try again.',
         variant: 'destructive'
       });
     } finally {
       setIsProcessing(false);
     }
   };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CreditCard className="h-5 w-5" />
+          Payment Details
+        </CardTitle>
+        <CardDescription>
+          Complete your payment to unlock WhatsApp Live Chat access
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Apple Pay / Google Pay Button */}
+        {paymentRequest && canMakePayment && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <Smartphone className="w-4 h-4" />
+              <span>Quick Payment</span>
+            </div>
+            <PaymentRequestButtonElement 
+              options={{ paymentRequest }}
+              className="PaymentRequestButton"
+            />
+            <div className="flex items-center gap-3 my-4">
+              <div className="flex-1 h-px bg-gray-300"></div>
+              <span className="text-sm text-gray-500">or pay with card</span>
+              <div className="flex-1 h-px bg-gray-300"></div>
+            </div>
+          </div>
+        )}
+
+        {/* Card Payment Form */}
+        <form onSubmit={handleCardPayment} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="card-element">Card Information</Label>
+            <div className="p-3 border rounded-md bg-white">
+              <CardElement 
+                id="card-element"
+                options={cardElementOptions}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Cardholder Name</Label>
+              <Input 
+                value={formData.name} 
+                disabled 
+                className="bg-gray-50"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input 
+                value={formData.email} 
+                disabled 
+                className="bg-gray-50"
+              />
+            </div>
+          </div>
+
+          <div className="bg-blue-50 p-3 rounded-lg text-sm">
+            <div className="flex items-center gap-2 text-blue-800 font-medium mb-1">
+              <CreditCard className="w-4 h-4" />
+              Secure Payment
+            </div>
+            <p className="text-blue-700">
+              Your payment is secured by Stripe with 256-bit SSL encryption
+            </p>
+          </div>
+
+          <Button 
+            type="submit" 
+            disabled={!stripe || isProcessing}
+            className="w-full bg-green-600 hover:bg-green-700 text-white h-12"
+          >
+            {isProcessing ? (
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <span>Processing Payment...</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5" />
+                <span>Pay €2.99</span>
+              </div>
+            )}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+};
+
+const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
+  isOpen,
+  onClose,
+  onSuccess
+}) => {
+  const [paymentStep, setPaymentStep] = useState<'details' | 'payment' | 'success'>('details');
+  const [formData, setFormData] = useState({
+    email: '',
+    name: ''
+  });
+  const [stripePromise] = useState(() => loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY));
 
   const resetDialog = () => {
     setPaymentStep('details');
@@ -103,6 +331,13 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
     });
   };
 
+  const handleContinueToPayment = () => {
+    if (!formData.email || !formData.name) {
+      return;
+    }
+    setPaymentStep('payment');
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => {
       if (!open) {
@@ -110,7 +345,7 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
         resetDialog();
       }
     }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <MessageCircle className="h-5 w-5 text-green-600" />
@@ -138,127 +373,53 @@ const WhatsAppPaymentDialog: React.FC<WhatsAppPaymentDialogProps> = ({
                 </ul>
               </div>
 
-              <div className="bg-gradient-to-r from-blue-50 to-green-50 p-4 rounded-lg border">
-                <h4 className="font-semibold text-gray-800 mb-3 text-center">Secure Payment with Stripe Link</h4>
-                
-                {/* Stripe Link Payment Button */}
-                <div className="bg-white p-4 rounded-lg border-2 border-blue-200 mb-4">
-                  <div className="flex items-center justify-center gap-3 mb-2">
-                    <div className="flex items-center gap-2">
-                      <Link className="w-5 h-5 text-blue-600" />
-                      <span className="font-semibold text-gray-800">Stripe Link</span>
-                    </div>
-                    <div className="bg-blue-100 px-2 py-1 rounded-full">
-                      <span className="text-xs font-medium text-blue-800">Recommended</span>
-                    </div>
-                  </div>
-                  <p className="text-sm text-gray-600 text-center mb-3">
-                    One-click payments • Secure • Works everywhere
-                  </p>
-                  <div className="flex items-center justify-center gap-2 text-xs text-gray-500">
-                    <span>💳 Credit Cards</span>
-                    <span>•</span>
-                    <span>🍎 Apple Pay</span>
-                    <span>•</span>
-                    <span>📱 Google Pay</span>
-                  </div>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Full Name</Label>
+                  <Input
+                    id="name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                    placeholder="John Doe"
+                  />
                 </div>
-
-                <Button 
-                  onClick={() => setPaymentStep('payment')} 
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white h-12 rounded-lg"
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    <Link className="w-5 h-5" />
-                    <span className="font-semibold">Continue with Stripe Link</span>
-                  </div>
-                </Button>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email Address</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    placeholder="john@example.com"
+                  />
+                </div>
               </div>
-              
+
               <div className="text-center py-4">
                 <div className="text-3xl font-bold text-green-600">€2.99</div>
                 <div className="text-sm text-gray-600">One-time payment • 30 days access</div>
               </div>
+
+              <Button 
+                onClick={handleContinueToPayment}
+                disabled={!formData.email || !formData.name}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white h-12"
+              >
+                Continue to Payment
+              </Button>
             </CardContent>
           </Card>
         )}
 
         {paymentStep === 'payment' && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Link className="h-5 w-5 text-blue-600" />
-                Payment Details
-              </CardTitle>
-              <CardDescription>
-                Enter your details to continue with Stripe Link checkout
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  placeholder="John Doe"
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  placeholder="john@example.com"
-                />
-                <p className="text-xs text-gray-500">
-                  We'll use this email for your Stripe Link account and payment receipts
-                </p>
-              </div>
-
-              <div className="bg-blue-50 p-3 rounded-lg">
-                <div className="flex items-center gap-2 mb-1">
-                  <Link className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm font-medium text-blue-800">Stripe Link Benefits</span>
-                </div>
-                <ul className="text-xs text-blue-700 space-y-1">
-                  <li>• Save payment methods for future purchases</li>
-                  <li>• One-click checkout on any site that accepts Link</li>
-                  <li>• Secure encryption and fraud protection</li>
-                </ul>
-              </div>
-
-              <div className="flex gap-2 pt-4">
-                <Button 
-                  variant="outline" 
-                  onClick={() => setPaymentStep('details')}
-                  className="flex-1"
-                >
-                  Back
-                </Button>
-                <Button 
-                  onClick={handleStripeLinkPayment} 
-                  disabled={isProcessing}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  {isProcessing ? (
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      <span>Processing...</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <Link className="w-4 h-4" />
-                      <span>Pay €2.99 with Link</span>
-                    </div>
-                  )}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          <Elements stripe={stripePromise}>
+            <PaymentForm 
+              formData={formData}
+              onSuccess={onSuccess}
+              onClose={onClose}
+            />
+          </Elements>
         )}
 
         {paymentStep === 'success' && (
