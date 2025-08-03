@@ -195,9 +195,13 @@ const PaymentForm: React.FC<{ onSuccess: () => void; formData: { name: string; e
         console.log("Payment succeeded:", paymentIntent.id);
         toast({ 
           title: "Payment Successful!", 
-          description: "Thank you for your purchase. You will be redirected shortly." 
+          description: "Thank you for your purchase! WhatsApp access is now available." 
         });
-        onSuccess();
+        
+        // Small delay to let user see success message, then trigger WhatsApp access
+        setTimeout(() => {
+          onSuccess();
+        }, 1500);
       } else {
         throw new Error(`Payment failed with status: ${paymentIntent?.status}`);
       }

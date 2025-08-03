@@ -80,13 +80,31 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({
     return 'I can help you with information about Tropoja\'s attractions, restaurants, hotels, and activities. What would you like to know?';
   };
 
-  const openWhatsApp = () => {
-    window.open('https://wa.me/017327456789?text=Hello, I need help with Tropoja tourism information', '_blank');
+  const openWhatsApp = (customerName?: string, customerEmail?: string) => {
+    let message = 'Hello, I need help with Tropoja tourism information';
+    
+    if (customerName && customerEmail) {
+      message = `Hello, I'm ${customerName} (${customerEmail}). I just purchased WhatsApp access and need help with Tropoja tourism information.`;
+    }
+    
+    const whatsappUrl = `https://wa.me/017327456789?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
   };
 
   const handleWhatsAppPaymentSuccess = () => {
     onWhatsAppPaymentSuccess();
     setShowWhatsAppPayment(false);
+    
+    // Show success message and offer to open WhatsApp immediately
+    setTimeout(() => {
+      const shouldOpenWhatsApp = window.confirm(
+        "Payment successful! Would you like to open WhatsApp now to start chatting with our tourism expert?"
+      );
+      
+      if (shouldOpenWhatsApp) {
+        openWhatsApp();
+      }
+    }, 2000);
   };
 
   return (
@@ -147,10 +165,11 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({
           {(isPremium || hasWhatsAppAccess) && (
             <div className="px-4 py-2 border-t bg-green-50">
               <Button
-                onClick={openWhatsApp}
-                className="w-full bg-green-600 hover:bg-green-700 text-white text-sm"
+                onClick={() => openWhatsApp()}
+                className="w-full bg-green-600 hover:bg-green-700 text-white"
                 size="sm"
               >
+                <MessageCircle className="h-4 w-4 mr-2" />
                 Chat Live on WhatsApp
               </Button>
             </div>
