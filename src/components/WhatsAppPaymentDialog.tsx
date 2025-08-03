@@ -143,9 +143,10 @@ const PaymentForm: React.FC<{ onSuccess: () => void; formData: { name: string; e
       // Create payment intent
       const { data: paymentData, error: functionError } = await supabase.functions.invoke('create-payment-intent', {
         body: { 
-          amount: 299, 
-          name: formData.name, 
-          email: formData.email 
+          amount: 299,
+          currency: 'eur',
+          customer_name: formData.name, 
+          customer_email: formData.email 
         },
       });
 
